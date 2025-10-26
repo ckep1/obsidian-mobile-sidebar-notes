@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, debounce } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, debounce, normalizePath, AbstractInputSuggest } from 'obsidian';
 
 interface NoteEntry {
 	path: string;
@@ -22,10 +22,13 @@ const DEFAULT_SETTINGS: MobileSidebarNotesSettings = {
 export default class MobileSidebarNotesPlugin extends Plugin {
 	settings: MobileSidebarNotesSettings;
 	private leafMap: Map<string, WorkspaceLeaf> = new Map();
-	private debounceTimer: number | null = null;
+	private debouncedRefreshViews: () => void;
 
 	async onload() {
 		await this.loadSettings();
+
+		// Initialize debounced refresh function
+		this.debouncedRefreshViews = debounce(this.refreshViews.bind(this), 300, true);
 
 		// Add settings tab
 		this.addSettingTab(new MobileSidebarNotesSettingTab(this.app, this));
@@ -57,11 +60,6 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 	onunload() {
 		// Clean up leaf references
 		this.leafMap.clear();
-
-		// Clear any pending timers
-		if (this.debounceTimer) {
-			window.clearTimeout(this.debounceTimer);
-		}
 	}
 
 	async openNoteInSidebar(noteEntry: NoteEntry) {
@@ -133,7 +131,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			}
 
 			// Check if file exists
-			const sanitizedPath = noteEntry.path.trim().replace(/\\/g, '/');
+			const sanitizedPath = normalizePath(noteEntry.path.trim());
 			const file = this.app.vault.getAbstractFileByPath(sanitizedPath);
 			if (!(file instanceof TFile)) {
 				return;
@@ -143,7 +141,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			const title = noteEntry.displayName.trim() || noteEntry.path || 'Untitled';
 			this.addCommand({
 				id: `open-${noteEntry.id}`,
-				name: `Open ${title} in Sidebar`,
+				name: `Open ${title} in sidebar`,
 				callback: () => {
 					this.openNoteInSidebar(noteEntry);
 				}
@@ -153,28 +151,21 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 
 
 	async refreshViews() {
-		// Debounce refresh to prevent rapid successive calls
-		if (this.debounceTimer) {
-			window.clearTimeout(this.debounceTimer);
-		}
-
-		this.debounceTimer = window.setTimeout(async () => {
-			// Close existing sidebar notes
-			this.leafMap.forEach((leaf) => {
-				if (leaf) {
-					leaf.detach();
-				}
-			});
-			this.leafMap.clear();
-
-			// Re-add commands and open notes
-			this.addCommands();
-
-			// Open notes sequentially to avoid race conditions
-			for (const entry of this.settings.noteEntries) {
-				await this.openNoteInSidebar(entry);
+		// Close existing sidebar notes
+		this.leafMap.forEach((leaf) => {
+			if (leaf) {
+				leaf.detach();
 			}
-		}, 300);
+		});
+		this.leafMap.clear();
+
+		// Re-add commands and open notes
+		this.addCommands();
+
+		// Open notes sequentially to avoid race conditions
+		for (const entry of this.settings.noteEntries) {
+			await this.openNoteInSidebar(entry);
+		}
 	}
 
 	async loadSettings() {
@@ -190,7 +181,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 	async saveSettings() {
 		try {
 			await this.saveData(this.settings);
-			await this.refreshViews();
+			this.debouncedRefreshViews();
 		} catch (error) {
 			console.error('Failed to save settings:', error);
 			new Notice('Failed to save settings');
@@ -198,29 +189,36 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 	}
 }
 
+class NotePathSuggest extends AbstractInputSuggest<TFile> {
+	constructor(app: App, private textComponent: TextComponent, private entry: NoteEntry, private saveCallback: () => Promise<void>) {
+		super(app, textComponent.inputEl);
+	}
+
+	getSuggestions(inputStr: string): TFile[] {
+		const files = this.app.vault.getMarkdownFiles();
+		const lowerInput = inputStr.toLowerCase();
+		return files
+			.filter(file => file.path.toLowerCase().includes(lowerInput))
+			.slice(0, 5);
+	}
+
+	renderSuggestion(file: TFile, el: HTMLElement): void {
+		el.setText(file.path);
+	}
+
+	selectSuggestion(file: TFile): void {
+		this.entry.path = file.path;
+		this.textComponent.setValue(file.path);
+		this.saveCallback();
+	}
+}
+
 class MobileSidebarNotesSettingTab extends PluginSettingTab {
 	plugin: MobileSidebarNotesPlugin;
-	private currentSuggestionEl: HTMLElement | null = null;
-	private suggestionClickInProgress = false;
-	private debouncedGetSuggestions: (value: string, inputEl: HTMLElement, textComponent: TextComponent, entry: NoteEntry) => void;
 
 	constructor(app: App, plugin: MobileSidebarNotesPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
-
-		// Create debounced suggestion function
-		this.debouncedGetSuggestions = debounce(
-			(value: string, inputEl: HTMLElement, textComponent: TextComponent, entry: NoteEntry) => {
-				if (!this.suggestionClickInProgress && document.activeElement === inputEl) {
-					const suggestions = this.getPathSuggestions(value);
-					if (suggestions.length > 0) {
-						this.showSuggestions(inputEl, suggestions, textComponent, entry);
-					}
-				}
-			},
-			300,
-			true
-		);
 	}
 
 	display(): void {
@@ -238,7 +236,9 @@ class MobileSidebarNotesSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		containerEl.createEl('h3', { text: 'Commands' });
+		new Setting(containerEl)
+			.setName('Commands')
+			.setHeading();
 
 		// Show tip if not dismissed
 		if (!this.plugin.settings.tipDismissed) {
@@ -268,7 +268,7 @@ class MobileSidebarNotesSettingTab extends PluginSettingTab {
 			.setName('Add specific notes as a command')
 			.setDesc('Registers a command to open a specific note in the sidebar in the command palette or as a hotkey.')
 			.addButton(button => button
-				.setButtonText('Add Command')
+				.setButtonText('Add command')
 				.onClick(async () => {
 					const newEntry: NoteEntry = {
 						path: '',
@@ -301,7 +301,21 @@ class MobileSidebarNotesSettingTab extends PluginSettingTab {
 						});
 
 					// Add autocomplete functionality
-					this.addPathAutocomplete(text, entry);
+					new NotePathSuggest(this.app, text, entry, async () => {
+						await this.plugin.saveSettings();
+						this.validatePath(text, entry.path, false);
+					});
+
+					// Handle Enter key to open note
+					text.inputEl.addEventListener('keydown', async (e) => {
+						if (e.key === 'Enter') {
+							e.preventDefault();
+							const isValid = this.validatePath(text, text.getValue(), true);
+							if (isValid) {
+								await this.plugin.openNoteInSidebar(entry);
+							}
+						}
+					});
 
 					// Initial validation
 					this.validatePath(text, entry.path, false);
@@ -335,7 +349,7 @@ class MobileSidebarNotesSettingTab extends PluginSettingTab {
 		}
 
 		// Sanitize path
-		const sanitizedPath = path.trim().replace(/\\/g, '/');
+		const sanitizedPath = normalizePath(path.trim());
 		const file = this.app.vault.getAbstractFileByPath(sanitizedPath);
 
 		if (file instanceof TFile) {
@@ -349,142 +363,6 @@ class MobileSidebarNotesSettingTab extends PluginSettingTab {
 				new Notice(`Note not found: ${path}`);
 			}
 			return false;
-		}
-	}
-
-	addPathAutocomplete(textComponent: TextComponent, entry: NoteEntry) {
-		const inputEl = textComponent.inputEl;
-		inputEl.addClass('mobile-sidebar-path-input');
-
-		inputEl.addEventListener('input', () => {
-			// Don't show suggestions if we're in the middle of a click
-			if (this.suggestionClickInProgress) return;
-
-			this.hideSuggestions();
-
-			const value = inputEl.value.trim();
-			if (value.length < 2) return;
-
-			this.debouncedGetSuggestions(value, inputEl, textComponent, entry);
-		});
-
-		inputEl.addEventListener('blur', () => {
-			// Don't hide immediately if clicking on suggestion
-			if (!this.suggestionClickInProgress) {
-				setTimeout(() => {
-					if (!this.suggestionClickInProgress) {
-						this.hideSuggestions();
-					}
-				}, 200);
-			}
-		});
-
-		// Handle keyboard navigation
-		inputEl.addEventListener('keydown', async (e) => {
-			if (e.key === 'Enter') {
-				e.preventDefault();
-				const isValid = this.validatePath(textComponent, inputEl.value, true);
-				if (isValid) {
-					// Open the note in sidebar when Enter is pressed on valid path
-					await this.plugin.openNoteInSidebar(entry);
-				}
-			} else if (e.key === 'Escape' && this.currentSuggestionEl) {
-				e.preventDefault();
-				this.hideSuggestions();
-			}
-		});
-	}
-
-	getPathSuggestions(query: string): string[] {
-		const files = this.app.vault.getMarkdownFiles();
-		return files
-			.map(file => file.path)
-			.filter(path => path.toLowerCase().includes(query.toLowerCase()))
-			.slice(0, 5);
-	}
-
-	showSuggestions(inputEl: HTMLElement, suggestions: string[], textComponent: TextComponent, entry: NoteEntry) {
-		this.hideSuggestions();
-
-		const suggestionEl = document.createElement('div');
-		suggestionEl.addClass('mobile-sidebar-suggestion-container');
-
-		// Set standard autocomplete width (following UX best practices)
-		const desiredWidth = Math.min(320, window.innerWidth - 20);
-		suggestionEl.style.setProperty('--suggestion-width', `${desiredWidth}px`);
-
-		suggestions.forEach(suggestion => {
-			const item = suggestionEl.createDiv();
-			item.addClass('mobile-sidebar-suggestion-item');
-			item.textContent = suggestion;
-
-			item.addEventListener('mousedown', (e) => {
-				e.preventDefault(); // Prevent blur
-				this.suggestionClickInProgress = true;
-			});
-
-			item.addEventListener('click', async () => {
-				// Update the entry directly
-				entry.path = suggestion;
-
-				// Set value in UI
-				textComponent.setValue(suggestion);
-
-				// Save settings to persist the change
-				await this.plugin.saveSettings();
-
-				this.hideSuggestions();
-				this.suggestionClickInProgress = false;
-				// Trigger validation without showing suggestions
-				this.validatePath(textComponent, suggestion, false);
-				// Remove focus from input
-				inputEl.blur();
-			});
-		});
-
-		document.body.appendChild(suggestionEl);
-		const rect = inputEl.getBoundingClientRect();
-		const viewportWidth = window.innerWidth;
-		const suggestionWidth = desiredWidth;
-
-		// Calculate available space below and above the input
-		const spaceBelow = window.innerHeight - rect.bottom;
-		const spaceAbove = rect.top;
-		const suggestionHeight = Math.min(200, suggestions.length * 40); // Approximate height
-
-		// Position vertically - below if there's enough space, otherwise position above
-		if (spaceBelow >= suggestionHeight || spaceBelow >= spaceAbove) {
-			// Position below
-			suggestionEl.style.setProperty('--suggestion-top', `${rect.bottom + 2}px`);
-			suggestionEl.style.setProperty('--suggestion-bottom', 'auto');
-		} else {
-			// Position above
-			suggestionEl.style.setProperty('--suggestion-bottom', `${window.innerHeight - rect.top + 2}px`);
-			suggestionEl.style.setProperty('--suggestion-top', 'auto');
-		}
-
-		// Position horizontally - ensure it fits within viewport
-		let leftPosition = rect.left;
-
-		// If suggestion box would extend past right edge, adjust position
-		if (leftPosition + suggestionWidth > viewportWidth) {
-			leftPosition = viewportWidth - suggestionWidth - 10; // 10px margin from edge
-		}
-
-		// Ensure it doesn't go past left edge
-		if (leftPosition < 10) {
-			leftPosition = 10; // 10px margin from left edge
-		}
-
-		suggestionEl.style.setProperty('--suggestion-left', `${leftPosition}px`);
-
-		this.currentSuggestionEl = suggestionEl;
-	}
-
-	hideSuggestions() {
-		if (this.currentSuggestionEl) {
-			this.currentSuggestionEl.remove();
-			this.currentSuggestionEl = null;
 		}
 	}
 

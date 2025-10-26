@@ -1,7 +1,7 @@
 {
 	"id": "mobile-sidebar-notes",
 	"name": "Mobile Sidebar Notes",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "0.15.0",
 	"description": "Open notes & new tabs in the sidebar in the mobile app.",
 	"author": "Chris Kephart",

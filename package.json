@@ -1,6 +1,6 @@
 {
 	"name": "mobile-sidebar-notes",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Open notes & new tabs in the sidebar in the mobile app.",
 	"main": "main.js",
 	"scripts": {
