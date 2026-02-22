@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, debounce, normalizePath, AbstractInputSuggest } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, debounce, normalizePath, AbstractInputSuggest, MarkdownView } from 'obsidian';
 
 interface NoteEntry {
 	path: string;
@@ -47,6 +47,22 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 				}
 			}
 		});
+
+		this.registerEvent(
+			this.app.workspace.on('file-open', (file) => {
+				if (!file)
+					return;
+				if (!this.settings.autoPinTabs)
+					return;
+
+				const active = this.app.workspace.getActiveViewOfType(MarkdownView)?.leaf;
+				if (!active)
+					return;
+
+				if (this.isEmptyRightLeaf(active))
+					active.setPinned(true);
+			})
+		);
 
 		// Listen for leaf changes to clean up our leaf map
 		this.registerEvent(
@@ -186,6 +202,14 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			console.error('Failed to save settings:', error);
 			new Notice('Failed to save settings');
 		}
+	}
+
+	private isEmptyRightLeaf(leaf: WorkspaceLeaf): boolean {
+		if (leaf.getRoot() !== this.app.workspace.rightSplit)
+			return false;
+
+		const state = leaf.getViewState();
+		return !state.pinned;
 	}
 }
 
