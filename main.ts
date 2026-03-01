@@ -1,9 +1,12 @@
-import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, debounce, normalizePath, AbstractInputSuggest } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, MarkdownView, debounce, normalizePath, AbstractInputSuggest } from 'obsidian';
+
+type SidebarSide = 'left' | 'right';
 
 interface NoteEntry {
 	path: string;
 	displayName: string;
 	id: string;
+	side: SidebarSide;
 }
 
 interface MobileSidebarNotesSettings {
@@ -24,6 +27,18 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 	private leafMap: Map<string, WorkspaceLeaf> = new Map();
 	private debouncedRefreshViews: () => void;
 
+	private getSplit(side: SidebarSide) {
+		return side === 'left'
+			? this.app.workspace.leftSplit
+			: this.app.workspace.rightSplit;
+	}
+
+	private getLeaf(side: SidebarSide) {
+		return side === 'left'
+			? this.app.workspace.getLeftLeaf(false)
+			: this.app.workspace.getRightLeaf(false);
+	}
+
 	async onload() {
 		await this.loadSettings();
 
@@ -36,19 +51,37 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 		// Add commands to open each note
 		this.addCommands();
 
-		// Add command to open new empty tab
 		this.addCommand({
-			id: 'open-new-sidebar-tab',
-			name: 'Open new sidebar tab',
+			id: 'open-new-right-sidebar-tab',
+			name: 'Open new right sidebar tab',
 			callback: () => {
-				const leaf = this.app.workspace.getRightLeaf(false);
-				if (leaf) {
-					this.app.workspace.revealLeaf(leaf);
-				}
+				const leaf = this.getLeaf('right');
+				if (leaf) this.app.workspace.revealLeaf(leaf);
 			}
 		});
 
-		// Listen for leaf changes to clean up our leaf map
+		this.addCommand({
+			id: 'open-new-left-sidebar-tab',
+			name: 'Open new left sidebar tab',
+			callback: () => {
+				const leaf = this.getLeaf('left');
+				if (leaf) this.app.workspace.revealLeaf(leaf);
+			}
+		});
+
+		this.registerEvent(
+			this.app.workspace.on('file-open', () => {
+				if (!this.settings.autoPinTabs) return;
+				const leaf = this.app.workspace.getActiveViewOfType(MarkdownView)?.leaf;
+				if (!leaf) return;
+				const root = leaf.getRoot();
+				if (root !== this.app.workspace.leftSplit && root !== this.app.workspace.rightSplit) return;
+				if (!leaf.getViewState().pinned) {
+					leaf.setPinned(true);
+				}
+			})
+		);
+
 		this.registerEvent(
 			this.app.workspace.on('layout-change', () => {
 				this.cleanupClosedLeaves();
@@ -73,11 +106,11 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 				return;
 			}
 
-			// Check if this file is already open in the right sidebar
+			const side = noteEntry.side || 'right';
 			const leaves = this.app.workspace.getLeavesOfType('markdown');
 			const existingLeaf = leaves.find(leaf =>
 				leaf.view.getState()?.file === file.path &&
-				leaf.getRoot() === this.app.workspace.rightSplit
+				leaf.getRoot() === this.getSplit(side)
 			);
 
 			if (existingLeaf) {
@@ -86,8 +119,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 				return;
 			}
 
-			// Create a new leaf in the right sidebar
-			const leaf = this.app.workspace.getRightLeaf(false);
+			const leaf = this.getLeaf(side);
 			if (leaf) {
 				await leaf.openFile(file);
 				// Store the leaf reference for this entry
@@ -105,9 +137,11 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 	}
 
 	cleanupClosedLeaves() {
-		// Remove closed leaves from our tracking map
 		const activeLeaves = this.app.workspace.getLeavesOfType('markdown')
-			.filter(leaf => leaf.getRoot() === this.app.workspace.rightSplit);
+			.filter(leaf =>
+				leaf.getRoot() === this.app.workspace.leftSplit ||
+				leaf.getRoot() === this.app.workspace.rightSplit
+			);
 
 		// Find entries whose leaves no longer exist
 		const toRemove: string[] = [];
@@ -139,9 +173,10 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 
 			// Use displayName if provided, otherwise use file path
 			const title = noteEntry.displayName.trim() || noteEntry.path || 'Untitled';
+			const side = noteEntry.side || 'right';
 			this.addCommand({
 				id: `open-${noteEntry.id}`,
-				name: `Open ${title} in sidebar`,
+				name: `Open ${title} in ${side} sidebar`,
 				callback: () => {
 					this.openNoteInSidebar(noteEntry);
 				}
@@ -225,7 +260,6 @@ class MobileSidebarNotesSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		// Auto-pin tabs setting
 		new Setting(containerEl)
 			.setName('Auto-pin tabs')
 			.setDesc('Automatically pin notes opened in the sidebar to open links in new tabs')
@@ -273,7 +307,8 @@ class MobileSidebarNotesSettingTab extends PluginSettingTab {
 					const newEntry: NoteEntry = {
 						path: '',
 						displayName: '',
-						id: `note-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`
+						id: `note-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`,
+						side: 'right'
 					};
 					this.plugin.settings.noteEntries.push(newEntry);
 					await this.plugin.saveSettings();
@@ -322,6 +357,14 @@ class MobileSidebarNotesSettingTab extends PluginSettingTab {
 
 					return text;
 				})
+				.addDropdown(dropdown => dropdown
+					.addOption('right', 'Right')
+					.addOption('left', 'Left')
+					.setValue(entry.side || 'right')
+					.onChange(async (value: SidebarSide) => {
+						entry.side = value;
+						await this.plugin.saveSettings();
+					}))
 				.addButton(button => button
 					.setButtonText('Remove')
 					.setWarning()
