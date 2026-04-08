@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, MarkdownView, debounce, normalizePath, AbstractInputSuggest } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, MarkdownView, Menu, debounce, normalizePath, AbstractInputSuggest } from 'obsidian';
 
 type SidebarSide = 'left' | 'right';
 
@@ -25,6 +25,7 @@ const DEFAULT_SETTINGS: MobileSidebarNotesSettings = {
 export default class MobileSidebarNotesPlugin extends Plugin {
 	settings: MobileSidebarNotesSettings;
 	private leafMap: Map<string, WorkspaceLeaf> = new Map();
+	private manuallyUnpinned: WeakSet<WorkspaceLeaf> = new WeakSet();
 	private debouncedRefreshViews: () => void;
 
 	private getSplit(side: SidebarSide) {
@@ -76,9 +77,31 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 				if (!leaf) return;
 				const root = leaf.getRoot();
 				if (root !== this.app.workspace.leftSplit && root !== this.app.workspace.rightSplit) return;
-				if (!leaf.getViewState().pinned) {
+				if (!leaf.getViewState().pinned && !this.manuallyUnpinned.has(leaf)) {
 					leaf.setPinned(true);
 				}
+			})
+		);
+
+		this.registerEvent(
+			this.app.workspace.on('file-menu', (menu: Menu, file, source, leaf) => {
+				if (!leaf) return;
+				const root = leaf.getRoot();
+				if (root !== this.app.workspace.leftSplit && root !== this.app.workspace.rightSplit) return;
+				const pinned = leaf.getViewState().pinned;
+				menu.addItem((item) => {
+					item.setTitle(pinned ? 'Unpin' : 'Pin')
+						.setIcon('pin')
+						.setSection('pane')
+						.onClick(() => {
+						if (pinned) {
+							this.manuallyUnpinned.add(leaf);
+						} else {
+							this.manuallyUnpinned.delete(leaf);
+						}
+						leaf.setPinned(!pinned);
+					});
+				});
 			})
 		);
 
