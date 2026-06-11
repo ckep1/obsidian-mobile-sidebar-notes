@@ -1,16 +1,17 @@
 # Mobile Sidebar Notes
 
-Open notes or new tabs in the sidebar in the mobile app. Maintains full editor functionality, works with all editor types including canvases!
+Open notes or new tabs in the sidebar in the mobile app.
 While this plugin works as expected on desktop for loading notes in the sidebar and adds commands, this functionality is already built-in on desktop.
 
 ## Features
 
-- Commands to open new empty sidebar tabs (left or right) for browsing
-- Set specific notes as commands for easy sidebar access (compatible with hotkeys)
-- Choose left or right sidebar per note command
-- Smart duplicate prevention - won't open the same note twice
+- Commands to open new empty sidebar tabs (left or right)
+- Set specific notes as commands for quick sidebar access (compatible with hotkeys)
+- Choose left or right sidebar per note command (right is default for new commands)
+- Duplicate prevention for the same note in the same sidebar
 - Auto-pin tabs so links open in new tabs instead of replacing the current one
-- Autocomplete path suggestions when configuring notes
+- Autocomplete path suggestions for markdown note paths
+- Invalid or missing note paths are flagged and those commands are not registered
 
 ## Installation
 
@@ -20,19 +21,19 @@ While this plugin works as expected on desktop for loading notes in the sidebar 
 
 ## Usage
 
-1. Go to Settings → Mobile Sidebar Note
+1. Go to Settings → Mobile Sidebar Notes
 2. Click "Add Command" to configure a sidebar note command
-3. Enter a display name, note path (autocomplete helps find notes), and choose left or right sidebar
-4. Use commands or "Open new sidebar tab" to access notes
+3. Enter a display name, note path (autocomplete suggests markdown notes), and choose left or right sidebar
+4. Use commands or the new sidebar tab commands to access notes
 
 **or simply:**
 
-1. Run the command "Open new right sidebar tab" or "Open new left sidebar tab"
-2. Select the note you'd like to show
+1. Run "Open new right sidebar tab" or "Open new left sidebar tab"
+2. Open a note in that sidebar tab
 
 ### Commands
 
-- **Open [Note Name] in [left/right] sidebar**: Opens configured notes in the chosen sidebar
+- **Open [configured title or note path] in [left/right] sidebar**: Opens configured notes in the chosen sidebar
 - **Open new right sidebar tab**: Creates empty tab in the right sidebar
 - **Open new left sidebar tab**: Creates empty tab in the left sidebar
 
@@ -44,13 +45,13 @@ While this plugin works as expected on desktop for loading notes in the sidebar 
 
 ### Commands
 
-- **Commands**: Add/remove notes to create commands for sidebar access. Each command has a title, note path, and sidebar side selector.
+- **Commands**: Add/remove notes to create commands for sidebar access. Each command has a title, note path, and sidebar side selector. Commands are only registered when the note path is valid.
 
 ## Tips
 
 - Within the sidebar, press and hold on the dropdown of the note for options such as closing, pinning and renaming.
 - Tabs tend to persist between sessions / after opening unless manually closed.
-- Duplicate tabs are prevented when opening the same note multiple times.
+- Duplicate tabs are prevented when opening the same note in the same sidebar.
 - This is a standard editor tab, so most core note functionality should be preserved.
 - Any notes opened will continue to work as normal even if the plugin is disabled.
 
