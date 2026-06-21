@@ -8,6 +8,9 @@ While this plugin works as expected on desktop for loading notes in the sidebar 
 - Commands to open new empty sidebar tabs (left or right)
 - Set specific notes as commands for quick sidebar access (compatible with hotkeys)
 - Choose left or right sidebar per note command (right is default for new commands)
+- Move the active tab into a sidebar (or back to the main area) while keeping its scroll position
+- Open today's daily note directly in a sidebar (uses the core Daily notes settings)
+- Close all note tabs in a sidebar, or deduplicate repeated notes, in one command
 - Duplicate prevention for the same note in the same sidebar
 - Auto-pin tabs so links open in new tabs instead of replacing the current one
 - Autocomplete path suggestions for markdown note paths
@@ -36,6 +39,11 @@ While this plugin works as expected on desktop for loading notes in the sidebar 
 - **Open [configured title or note path] in [left/right] sidebar**: Opens configured notes in the chosen sidebar
 - **Open new right sidebar tab**: Creates empty tab in the right sidebar
 - **Open new left sidebar tab**: Creates empty tab in the left sidebar
+- **Move active tab to right/left sidebar**: Moves the tab you're viewing into that sidebar, preserving scroll position; the original is closed
+- **Move active tab to main area**: Moves the active sidebar tab back into the main editor area
+- **Close all note tabs in right/left sidebar**: Closes note (and empty) tabs in that sidebar; core views like Search or Backlinks are left untouched
+- **Deduplicate sidebar note tabs**: Closes repeated copies of the same note within each sidebar
+- **Open today's daily note in right/left sidebar**: Resolves today's daily note (creating it if needed) and opens it in the sidebar
 
 ## Settings
 
