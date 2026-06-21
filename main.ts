@@ -27,6 +27,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 	settings: MobileSidebarNotesSettings;
 	private leafMap: Map<string, WorkspaceLeaf> = new Map();
 	private manuallyUnpinned: WeakSet<WorkspaceLeaf> = new WeakSet();
+	private lastSidebarLeaf: WorkspaceLeaf | null = null;
 	private debouncedRefreshViews: () => void;
 
 	private getSplit(side: SidebarSide) {
@@ -74,19 +75,19 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 		this.addCommand({
 			id: 'move-active-tab-to-right-sidebar',
 			name: 'Move active tab to right sidebar',
-			callback: () => this.moveActiveLeaf('right')
+			callback: () => this.moveActiveTabToSidebar('right')
 		});
 
 		this.addCommand({
 			id: 'move-active-tab-to-left-sidebar',
 			name: 'Move active tab to left sidebar',
-			callback: () => this.moveActiveLeaf('left')
+			callback: () => this.moveActiveTabToSidebar('left')
 		});
 
 		this.addCommand({
 			id: 'move-active-tab-to-main',
 			name: 'Move active tab to main area',
-			callback: () => this.moveActiveLeaf('main')
+			callback: () => this.moveActiveTabToMain()
 		});
 
 		this.addCommand({
@@ -133,10 +134,21 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 		);
 
 		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', (leaf) => {
+				if (leaf && this.isSidebarLeaf(leaf)) {
+					this.lastSidebarLeaf = leaf;
+				}
+			})
+		);
+
+		this.registerEvent(
 			this.app.workspace.on('file-menu', (menu: Menu, file, source, leaf) => {
 				if (!leaf) return;
 				const root = leaf.getRoot();
-				if (root !== this.app.workspace.leftSplit && root !== this.app.workspace.rightSplit) return;
+				const inLeft = root === this.app.workspace.leftSplit;
+				const inRight = root === this.app.workspace.rightSplit;
+				if (!inLeft && !inRight) return;
+
 				const pinned = leaf.getViewState().pinned;
 				menu.addItem((item) => {
 					item.setTitle(pinned ? 'Unpin' : 'Pin')
@@ -150,6 +162,21 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 						}
 						leaf.setPinned(!pinned);
 					});
+				});
+
+				menu.addItem((item) => {
+					item.setTitle('Move to main area')
+						.setIcon('gallery-vertical')
+						.setSection('pane')
+						.onClick(() => this.moveLeaf(leaf, 'main'));
+				});
+
+				const otherSide: SidebarSide = inLeft ? 'right' : 'left';
+				menu.addItem((item) => {
+					item.setTitle(`Move to ${otherSide} sidebar`)
+						.setIcon(otherSide === 'left' ? 'arrow-left-to-line' : 'arrow-right-to-line')
+						.setSection('pane')
+						.onClick(() => this.moveLeaf(leaf, otherSide));
 				});
 			})
 		);
@@ -216,14 +243,53 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 		}
 	}
 
-	async moveActiveLeaf(destination: SidebarSide | 'main') {
-		const source = this.app.workspace.activeLeaf;
-		if (!source) {
+	private isSidebarLeaf(leaf: WorkspaceLeaf): boolean {
+		const root = leaf.getRoot();
+		return root === this.app.workspace.leftSplit || root === this.app.workspace.rightSplit;
+	}
+
+	private isLeafAttached(leaf: WorkspaceLeaf): boolean {
+		let attached = false;
+		this.app.workspace.iterateAllLeaves((candidate) => {
+			if (candidate === leaf) attached = true;
+		});
+		return attached;
+	}
+
+	// On mobile the command palette steals focus to the main area, so the active
+	// leaf is rarely the sidebar note the user is looking at. Fall back to the
+	// last sidebar leaf we saw become active.
+	private resolveSidebarLeaf(): WorkspaceLeaf | null {
+		const active = this.app.workspace.activeLeaf;
+		if (active && this.isSidebarLeaf(active)) {
+			return active;
+		}
+		if (this.lastSidebarLeaf && this.isLeafAttached(this.lastSidebarLeaf) && this.isSidebarLeaf(this.lastSidebarLeaf)) {
+			return this.lastSidebarLeaf;
+		}
+		return null;
+	}
+
+	moveActiveTabToSidebar(side: SidebarSide) {
+		const leaf = this.app.workspace.activeLeaf;
+		if (!leaf) {
 			new Notice('No active tab to move');
 			return;
 		}
+		this.moveLeaf(leaf, side);
+	}
 
-		const root = source.getRoot();
+	moveActiveTabToMain() {
+		const leaf = this.resolveSidebarLeaf();
+		if (!leaf) {
+			new Notice('No sidebar tab to move to the main area');
+			return;
+		}
+		this.moveLeaf(leaf, 'main');
+	}
+
+	async moveLeaf(leaf: WorkspaceLeaf, destination: SidebarSide | 'main') {
+		const root = leaf.getRoot();
 		const inLeft = root === this.app.workspace.leftSplit;
 		const inRight = root === this.app.workspace.rightSplit;
 
@@ -240,8 +306,8 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			return;
 		}
 
-		const { type, state } = source.getViewState();
-		const ephemeral = source.getEphemeralState();
+		const { type, state } = leaf.getViewState();
+		const ephemeral = leaf.getEphemeralState();
 
 		const target = destination === 'main'
 			? this.app.workspace.getLeaf('tab')
@@ -254,7 +320,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 
 		await target.setViewState({ type, state, active: true });
 		target.setEphemeralState(ephemeral);
-		source.detach();
+		leaf.detach();
 
 		if (destination !== 'main' && this.settings.autoPinTabs) {
 			target.setPinned(true);
@@ -347,6 +413,10 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 		toRemove.forEach(id => {
 			this.leafMap.delete(id);
 		});
+
+		if (this.lastSidebarLeaf && !this.isLeafAttached(this.lastSidebarLeaf)) {
+			this.lastSidebarLeaf = null;
+		}
 	}
 
 	addCommands() {
