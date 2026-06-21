@@ -1,4 +1,5 @@
-import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, MarkdownView, Menu, debounce, normalizePath, AbstractInputSuggest } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, MarkdownView, Menu, debounce, normalizePath, AbstractInputSuggest, moment } from 'obsidian';
+import { appHasDailyNotesPluginLoaded, getAllDailyNotes, getDailyNote, createDailyNote } from 'obsidian-daily-notes-interface';
 
 type SidebarSide = 'left' | 'right';
 
@@ -70,6 +71,54 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: 'move-active-tab-to-right-sidebar',
+			name: 'Move active tab to right sidebar',
+			callback: () => this.moveActiveLeaf('right')
+		});
+
+		this.addCommand({
+			id: 'move-active-tab-to-left-sidebar',
+			name: 'Move active tab to left sidebar',
+			callback: () => this.moveActiveLeaf('left')
+		});
+
+		this.addCommand({
+			id: 'move-active-tab-to-main',
+			name: 'Move active tab to main area',
+			callback: () => this.moveActiveLeaf('main')
+		});
+
+		this.addCommand({
+			id: 'close-note-tabs-right-sidebar',
+			name: 'Close all note tabs in right sidebar',
+			callback: () => this.closeSidebarNoteTabs('right')
+		});
+
+		this.addCommand({
+			id: 'close-note-tabs-left-sidebar',
+			name: 'Close all note tabs in left sidebar',
+			callback: () => this.closeSidebarNoteTabs('left')
+		});
+
+		this.addCommand({
+			id: 'deduplicate-sidebar-note-tabs',
+			name: 'Deduplicate sidebar note tabs',
+			callback: () => this.deduplicateSidebarNoteTabs()
+		});
+
+		this.addCommand({
+			id: 'open-todays-daily-note-right-sidebar',
+			name: "Open today's daily note in right sidebar",
+			callback: () => this.openTodaysDailyNote('right')
+		});
+
+		this.addCommand({
+			id: 'open-todays-daily-note-left-sidebar',
+			name: "Open today's daily note in left sidebar",
+			callback: () => this.openTodaysDailyNote('left')
+		});
+
 		this.registerEvent(
 			this.app.workspace.on('file-open', () => {
 				if (!this.settings.autoPinTabs) return;
@@ -118,6 +167,33 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 		this.leafMap.clear();
 	}
 
+	async openFileInSidebar(file: TFile, side: SidebarSide): Promise<WorkspaceLeaf | null> {
+		const existingLeaf = this.app.workspace.getLeavesOfType('markdown').find(leaf =>
+			leaf.view.getState()?.file === file.path &&
+			leaf.getRoot() === this.getSplit(side)
+		);
+
+		if (existingLeaf) {
+			this.app.workspace.revealLeaf(existingLeaf);
+			return existingLeaf;
+		}
+
+		const leaf = this.getLeaf(side);
+		if (!leaf) {
+			return null;
+		}
+
+		await leaf.openFile(file);
+
+		// Auto-pin the tab if setting is enabled
+		if (this.settings.autoPinTabs) {
+			leaf.setPinned(true);
+		}
+
+		this.app.workspace.revealLeaf(leaf);
+		return leaf;
+	}
+
 	async openNoteInSidebar(noteEntry: NoteEntry) {
 		try {
 			if (!noteEntry.path || !noteEntry.path.trim()) {
@@ -130,32 +206,125 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			}
 
 			const side = noteEntry.side || 'right';
-			const leaves = this.app.workspace.getLeavesOfType('markdown');
-			const existingLeaf = leaves.find(leaf =>
-				leaf.view.getState()?.file === file.path &&
-				leaf.getRoot() === this.getSplit(side)
-			);
-
-			if (existingLeaf) {
-				this.app.workspace.revealLeaf(existingLeaf);
-				this.leafMap.set(noteEntry.id, existingLeaf);
-				return;
-			}
-
-			const leaf = this.getLeaf(side);
+			const leaf = await this.openFileInSidebar(file, side);
 			if (leaf) {
-				await leaf.openFile(file);
-				// Store the leaf reference for this entry
 				this.leafMap.set(noteEntry.id, leaf);
-
-				// Auto-pin the tab if setting is enabled
-				if (this.settings.autoPinTabs) {
-					leaf.setPinned(true);
-				}
 			}
 		} catch (error) {
 			console.error('Error opening note in sidebar:', error);
 			new Notice(`Failed to open note: ${error.message}`);
+		}
+	}
+
+	async moveActiveLeaf(destination: SidebarSide | 'main') {
+		const source = this.app.workspace.activeLeaf;
+		if (!source) {
+			new Notice('No active tab to move');
+			return;
+		}
+
+		const root = source.getRoot();
+		const inLeft = root === this.app.workspace.leftSplit;
+		const inRight = root === this.app.workspace.rightSplit;
+
+		if (destination === 'left' && inLeft) {
+			new Notice('Tab is already in the left sidebar');
+			return;
+		}
+		if (destination === 'right' && inRight) {
+			new Notice('Tab is already in the right sidebar');
+			return;
+		}
+		if (destination === 'main' && !inLeft && !inRight) {
+			new Notice('Tab is already in the main area');
+			return;
+		}
+
+		const { type, state } = source.getViewState();
+		const ephemeral = source.getEphemeralState();
+
+		const target = destination === 'main'
+			? this.app.workspace.getLeaf('tab')
+			: this.getLeaf(destination);
+
+		if (!target) {
+			new Notice('Could not open a destination tab');
+			return;
+		}
+
+		await target.setViewState({ type, state, active: true });
+		target.setEphemeralState(ephemeral);
+		source.detach();
+
+		if (destination !== 'main' && this.settings.autoPinTabs) {
+			target.setPinned(true);
+		}
+
+		this.app.workspace.revealLeaf(target);
+	}
+
+	closeSidebarNoteTabs(side: SidebarSide) {
+		const split = this.getSplit(side);
+		const leaves = [
+			...this.app.workspace.getLeavesOfType('markdown'),
+			...this.app.workspace.getLeavesOfType('empty')
+		].filter(leaf => leaf.getRoot() === split);
+
+		leaves.forEach(leaf => leaf.detach());
+
+		const label = side === 'left' ? 'left' : 'right';
+		new Notice(leaves.length
+			? `Closed ${leaves.length} note tab${leaves.length === 1 ? '' : 's'} in the ${label} sidebar`
+			: `No note tabs to close in the ${label} sidebar`);
+	}
+
+	deduplicateSidebarNoteTabs() {
+		let removed = 0;
+
+		(['left', 'right'] as SidebarSide[]).forEach(side => {
+			const split = this.getSplit(side);
+			const leaves = this.app.workspace.getLeavesOfType('markdown')
+				.filter(leaf => leaf.getRoot() === split);
+
+			const seen = new Set<string>();
+			leaves.forEach(leaf => {
+				const path = leaf.view.getState()?.file as string | undefined;
+				if (!path) return;
+				if (seen.has(path)) {
+					leaf.detach();
+					removed++;
+				} else {
+					seen.add(path);
+				}
+			});
+		});
+
+		new Notice(removed
+			? `Removed ${removed} duplicate tab${removed === 1 ? '' : 's'}`
+			: 'No duplicate tabs found');
+	}
+
+	async openTodaysDailyNote(side: SidebarSide) {
+		try {
+			if (!appHasDailyNotesPluginLoaded()) {
+				new Notice('Enable the core Daily notes plugin to use this command');
+				return;
+			}
+
+			const today = moment();
+			let file: TFile | undefined = getDailyNote(today, getAllDailyNotes());
+			if (!file) {
+				file = await createDailyNote(today);
+			}
+			if (!file) {
+				new Notice("Could not resolve today's daily note");
+				return;
+			}
+
+			await this.openFileInSidebar(file, side);
+		} catch (error) {
+			console.error('Error opening daily note in sidebar:', error);
+			new Notice(`Failed to open daily note: ${error.message}`);
 		}
 	}
 
