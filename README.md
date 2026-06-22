@@ -58,6 +58,7 @@ While this plugin works as expected on desktop for loading notes in the sidebar 
 ## Tips
 
 - Within the sidebar, press and hold on the dropdown of the note for options such as closing, pinning, renaming, and moving the tab to the main area or the other sidebar.
+- A main-area note's menu (press and hold its tab/dropdown) gains "Move to left/right sidebar" too, handy when a note opens in the center instead of the sidebar it was triggered from.
 - Tabs tend to persist between sessions / after opening unless manually closed.
 - Duplicate tabs are prevented when opening the same note in the same sidebar.
 - This is a standard editor tab, so most core note functionality should be preserved.

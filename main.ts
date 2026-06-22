@@ -147,36 +147,51 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 				const root = leaf.getRoot();
 				const inLeft = root === this.app.workspace.leftSplit;
 				const inRight = root === this.app.workspace.rightSplit;
-				if (!inLeft && !inRight) return;
 
-				const pinned = leaf.getViewState().pinned;
-				menu.addItem((item) => {
-					item.setTitle(pinned ? 'Unpin' : 'Pin')
-						.setIcon('pin')
-						.setSection('pane')
-						.onClick(() => {
-						if (pinned) {
-							this.manuallyUnpinned.add(leaf);
-						} else {
-							this.manuallyUnpinned.delete(leaf);
-						}
-						leaf.setPinned(!pinned);
+				if (inLeft || inRight) {
+					const pinned = leaf.getViewState().pinned;
+					menu.addItem((item) => {
+						item.setTitle(pinned ? 'Unpin' : 'Pin')
+							.setIcon('pin')
+							.setSection('pane')
+							.onClick(() => {
+							if (pinned) {
+								this.manuallyUnpinned.add(leaf);
+							} else {
+								this.manuallyUnpinned.delete(leaf);
+							}
+							leaf.setPinned(!pinned);
+						});
 					});
-				});
 
-				menu.addItem((item) => {
-					item.setTitle('Move to main area')
-						.setIcon('gallery-vertical')
-						.setSection('pane')
-						.onClick(() => this.moveLeaf(leaf, 'main'));
-				});
+					menu.addItem((item) => {
+						item.setTitle('Move to main area')
+							.setIcon('gallery-vertical')
+							.setSection('pane')
+							.onClick(() => this.moveLeaf(leaf, 'main'));
+					});
 
-				const otherSide: SidebarSide = inLeft ? 'right' : 'left';
-				menu.addItem((item) => {
-					item.setTitle(`Move to ${otherSide} sidebar`)
-						.setIcon(otherSide === 'left' ? 'arrow-left-to-line' : 'arrow-right-to-line')
-						.setSection('pane')
-						.onClick(() => this.moveLeaf(leaf, otherSide));
+					const otherSide: SidebarSide = inLeft ? 'right' : 'left';
+					menu.addItem((item) => {
+						item.setTitle(`Move to ${otherSide} sidebar`)
+							.setIcon(otherSide === 'left' ? 'arrow-left-to-line' : 'arrow-right-to-line')
+							.setSection('pane')
+							.onClick(() => this.moveLeaf(leaf, otherSide));
+					});
+					return;
+				}
+
+				// Main-area tab: only offer the move when this menu belongs to the
+				// note actually open in the leaf (skip File Explorer / link menus).
+				if (leaf.view.getState()?.file !== file.path) return;
+
+				(['left', 'right'] as SidebarSide[]).forEach((side) => {
+					menu.addItem((item) => {
+						item.setTitle(`Move to ${side} sidebar`)
+							.setIcon(side === 'left' ? 'arrow-left-to-line' : 'arrow-right-to-line')
+							.setSection('pane')
+							.onClick(() => this.moveLeaf(leaf, side));
+					});
 				});
 			})
 		);
