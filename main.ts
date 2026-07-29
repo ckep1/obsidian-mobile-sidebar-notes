@@ -59,7 +59,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			name: 'Open new right sidebar tab',
 			callback: () => {
 				const leaf = this.getLeaf('right');
-				if (leaf) this.app.workspace.revealLeaf(leaf);
+				if (leaf) void this.app.workspace.revealLeaf(leaf);
 			}
 		});
 
@@ -68,7 +68,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			name: 'Open new left sidebar tab',
 			callback: () => {
 				const leaf = this.getLeaf('left');
-				if (leaf) this.app.workspace.revealLeaf(leaf);
+				if (leaf) void this.app.workspace.revealLeaf(leaf);
 			}
 		});
 
@@ -216,7 +216,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 		);
 
 		if (existingLeaf) {
-			this.app.workspace.revealLeaf(existingLeaf);
+			await this.app.workspace.revealLeaf(existingLeaf);
 			return existingLeaf;
 		}
 
@@ -232,7 +232,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			leaf.setPinned(true);
 		}
 
-		this.app.workspace.revealLeaf(leaf);
+		await this.app.workspace.revealLeaf(leaf);
 		return leaf;
 	}
 
@@ -275,7 +275,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 	// leaf is rarely the sidebar note the user is looking at. Fall back to the
 	// last sidebar leaf we saw become active.
 	private resolveSidebarLeaf(): WorkspaceLeaf | null {
-		const active = this.app.workspace.activeLeaf;
+		const active = this.app.workspace.getMostRecentLeaf();
 		if (active && this.isSidebarLeaf(active)) {
 			return active;
 		}
@@ -286,12 +286,12 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 	}
 
 	moveActiveTabToSidebar(side: SidebarSide) {
-		const leaf = this.app.workspace.activeLeaf;
+		const leaf = this.app.workspace.getMostRecentLeaf();
 		if (!leaf) {
 			new Notice('No active tab to move');
 			return;
 		}
-		this.moveLeaf(leaf, side);
+		void this.moveLeaf(leaf, side);
 	}
 
 	moveActiveTabToMain() {
@@ -300,7 +300,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			new Notice('No sidebar tab to move to the main area');
 			return;
 		}
-		this.moveLeaf(leaf, 'main');
+		void this.moveLeaf(leaf, 'main');
 	}
 
 	async moveLeaf(leaf: WorkspaceLeaf, destination: SidebarSide | 'main') {
@@ -341,7 +341,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			target.setPinned(true);
 		}
 
-		this.app.workspace.revealLeaf(target);
+		await this.app.workspace.revealLeaf(target);
 	}
 
 	closeSidebarNoteTabs(side: SidebarSide) {
@@ -455,7 +455,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 				id: `open-${noteEntry.id}`,
 				name: `Open ${title} in ${side} sidebar`,
 				callback: () => {
-					this.openNoteInSidebar(noteEntry);
+					void this.openNoteInSidebar(noteEntry);
 				}
 			});
 		});
@@ -521,7 +521,7 @@ class NotePathSuggest extends AbstractInputSuggest<TFile> {
 	selectSuggestion(file: TFile): void {
 		this.entry.path = file.path;
 		this.textComponent.setValue(file.path);
-		this.saveCallback();
+		void this.saveCallback();
 	}
 }
 
@@ -566,10 +566,10 @@ class MobileSidebarNotesSettingTab extends PluginSettingTab {
 			});
 			dismissBtn.title = 'Dismiss tip';
 
-			dismissBtn.addEventListener('click', async () => {
+			dismissBtn.addEventListener('click', () => {
 				this.plugin.settings.tipDismissed = true;
-				await this.plugin.saveSettings();
 				this.display();
+				void this.plugin.saveSettings();
 			});
 
 		}
@@ -619,12 +619,12 @@ class MobileSidebarNotesSettingTab extends PluginSettingTab {
 					});
 
 					// Handle Enter key to open note
-					text.inputEl.addEventListener('keydown', async (e) => {
+					text.inputEl.addEventListener('keydown', (e) => {
 						if (e.key === 'Enter') {
 							e.preventDefault();
 							const isValid = this.validatePath(text, text.getValue(), true);
 							if (isValid) {
-								await this.plugin.openNoteInSidebar(entry);
+								void this.plugin.openNoteInSidebar(entry);
 							}
 						}
 					});

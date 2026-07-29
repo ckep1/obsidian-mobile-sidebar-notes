@@ -8,8 +8,8 @@
 	transition: border-color 0.15s ease;
 }
 
-.mobile-sidebar-path-input.invalid {
-	color: var(--text-error) !important;
+.mobile-sidebar-setting-item input.mobile-sidebar-path-input.invalid {
+	color: var(--text-error);
 	transition: border-color 0.15s ease;
 }
 

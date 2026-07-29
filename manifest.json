@@ -1,8 +1,8 @@
 {
 	"id": "mobile-sidebar-notes",
 	"name": "Mobile Sidebar Notes",
-	"version": "1.3.0",
-	"minAppVersion": "0.15.0",
+	"version": "1.4.0",
+	"minAppVersion": "1.7.2",
 	"description": "Open notes in left or right mobile sidebars with commands, quick tabs, and optional auto-pin.",
 	"author": "Chris Kephart",
 	"authorUrl": "https://github.com/ckep1",

@@ -12,10 +12,6 @@ CLAUDE.md
 *.iml
 .idea
 
-# lockfiles
-package-lock.json
-bun.lock
-
 # npm
 node_modules
 
