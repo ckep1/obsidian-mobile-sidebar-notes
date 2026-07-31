@@ -1,7 +1,26 @@
-import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, MarkdownView, Menu, debounce, normalizePath, AbstractInputSuggest, moment } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, TFile, TextComponent, Notice, WorkspaceLeaf, MarkdownView, FileView, FuzzySuggestModal, Menu, EventRef, View, debounce, normalizePath, AbstractInputSuggest, moment } from 'obsidian';
 import { appHasDailyNotesPluginLoaded, getAllDailyNotes, getDailyNote, createDailyNote } from 'obsidian-daily-notes-interface';
 
+// Obsidian fires `leaf-menu` for every tab menu regardless of view type, which is
+// the only hook that reaches core sidebar views (Files, Search, Bookmarks...) since
+// those never fire `file-menu`. It is missing from the public typings.
+declare module 'obsidian' {
+	interface Workspace {
+		on(name: 'leaf-menu', callback: (menu: Menu, leaf: WorkspaceLeaf) => unknown, ctx?: unknown): EventRef;
+	}
+}
+
+// Also missing from the typings, and the only hook that reaches tabs other than
+// the one on screen: Obsidian skips `onPaneMenu` and `leaf-menu` for hidden
+// leaves, but always calls `onTabMenu`.
+type TabMenuView = View & { onTabMenu?: (menu: Menu) => void };
+
 type SidebarSide = 'left' | 'right';
+
+interface SidebarTabItem {
+	leaf: WorkspaceLeaf;
+	side: SidebarSide;
+}
 
 interface NoteEntry {
 	path: string;
@@ -27,6 +46,9 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 	settings: MobileSidebarNotesSettings;
 	private leafMap: Map<string, WorkspaceLeaf> = new Map();
 	private manuallyUnpinned: WeakSet<WorkspaceLeaf> = new WeakSet();
+	// `file-menu` fires immediately before `leaf-menu` for the same tab menu; this
+	// keeps file views from getting both handlers' items.
+	private menusHandled: WeakSet<Menu> = new WeakSet();
 	private lastSidebarLeaf: WorkspaceLeaf | null = null;
 	private debouncedRefreshViews: () => void;
 
@@ -53,6 +75,8 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 
 		// Add commands to open each note
 		this.addCommands();
+
+		this.patchTabMenu();
 
 		this.addCommand({
 			id: 'open-new-right-sidebar-tab',
@@ -88,6 +112,12 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			id: 'move-active-tab-to-main',
 			name: 'Move active tab to main area',
 			callback: () => this.moveActiveTabToMain()
+		});
+
+		this.addCommand({
+			id: 'move-sidebar-tab-to-other-sidebar',
+			name: 'Move a sidebar tab to the other sidebar',
+			callback: () => this.promptMoveSidebarTab()
 		});
 
 		this.addCommand({
@@ -143,41 +173,10 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 
 		this.registerEvent(
 			this.app.workspace.on('file-menu', (menu: Menu, file, source, leaf) => {
-				if (!leaf) return;
-				const root = leaf.getRoot();
-				const inLeft = root === this.app.workspace.leftSplit;
-				const inRight = root === this.app.workspace.rightSplit;
+				if (!leaf || this.menusHandled.has(menu)) return;
 
-				if (inLeft || inRight) {
-					const pinned = leaf.getViewState().pinned;
-					menu.addItem((item) => {
-						item.setTitle(pinned ? 'Unpin' : 'Pin')
-							.setIcon('pin')
-							.setSection('pane')
-							.onClick(() => {
-							if (pinned) {
-								this.manuallyUnpinned.add(leaf);
-							} else {
-								this.manuallyUnpinned.delete(leaf);
-							}
-							leaf.setPinned(!pinned);
-						});
-					});
-
-					menu.addItem((item) => {
-						item.setTitle('Move to main area')
-							.setIcon('gallery-vertical')
-							.setSection('pane')
-							.onClick(() => this.moveLeaf(leaf, 'main'));
-					});
-
-					const otherSide: SidebarSide = inLeft ? 'right' : 'left';
-					menu.addItem((item) => {
-						item.setTitle(`Move to ${otherSide} sidebar`)
-							.setIcon(otherSide === 'left' ? 'arrow-left-to-line' : 'arrow-right-to-line')
-							.setSection('pane')
-							.onClick(() => this.moveLeaf(leaf, otherSide));
-					});
+				if (this.isSidebarLeaf(leaf)) {
+					this.addMoveMenuItems(menu, leaf);
 					return;
 				}
 
@@ -185,14 +184,18 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 				// note actually open in the leaf (skip File Explorer / link menus).
 				if (leaf.view.getState()?.file !== file.path) return;
 
-				(['left', 'right'] as SidebarSide[]).forEach((side) => {
-					menu.addItem((item) => {
-						item.setTitle(`Move to ${side} sidebar`)
-							.setIcon(side === 'left' ? 'arrow-left-to-line' : 'arrow-right-to-line')
-							.setSection('pane')
-							.onClick(() => this.moveLeaf(leaf, side));
-					});
-				});
+				this.addMoveMenuItems(menu, leaf);
+			})
+		);
+
+		// Core views (Files, Search, Bookmarks...) get their move actions here, since
+		// they have no file and so never reach the `file-menu` handler above.
+		this.registerEvent(
+			this.app.workspace.on('leaf-menu', (menu: Menu, leaf: WorkspaceLeaf) => {
+				if (!leaf || this.menusHandled.has(menu)) return;
+				if (leaf.getViewState().type === 'empty') return;
+
+				this.addMoveMenuItems(menu, leaf);
 			})
 		);
 
@@ -258,6 +261,138 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 		}
 	}
 
+	// A hidden tab's view is still deferred, so its state is the only reliable
+	// way to tell a note apart from a core view like Search.
+	private isNoteLeaf(leaf: WorkspaceLeaf): boolean {
+		return leaf.view instanceof FileView || leaf.getViewState().type === 'markdown';
+	}
+
+	private addMoveMenuItems(menu: Menu, leaf: WorkspaceLeaf) {
+		this.menusHandled.add(menu);
+
+		const root = leaf.getRoot();
+		const inLeft = root === this.app.workspace.leftSplit;
+		const inRight = root === this.app.workspace.rightSplit;
+
+		if (inLeft || inRight) {
+			// Obsidian only offers this for main-area tabs (`canPin()` is false in a
+			// sidebar), so notes in the sidebar need our own toggle.
+			if (this.isNoteLeaf(leaf)) {
+				const pinned = leaf.getViewState().pinned;
+				menu.addItem((item) => {
+					item.setTitle(pinned ? 'Unpin' : 'Pin')
+						.setIcon('pin')
+						.setSection('pane')
+						.onClick(() => {
+							if (pinned) {
+								this.manuallyUnpinned.add(leaf);
+							} else {
+								this.manuallyUnpinned.delete(leaf);
+							}
+							leaf.setPinned(!pinned);
+						});
+				});
+			}
+
+			menu.addItem((item) => {
+				item.setTitle('Move to main area')
+					.setIcon('gallery-vertical')
+					.setSection('pane')
+					.onClick(() => this.moveLeaf(leaf, 'main'));
+			});
+
+			const otherSide: SidebarSide = inLeft ? 'right' : 'left';
+			menu.addItem((item) => {
+				item.setTitle(`Move to ${otherSide} sidebar`)
+					.setIcon(otherSide === 'left' ? 'arrow-left-to-line' : 'arrow-right-to-line')
+					.setSection('pane')
+					.onClick(() => this.moveLeaf(leaf, otherSide));
+			});
+			return;
+		}
+
+		(['left', 'right'] as SidebarSide[]).forEach((side) => {
+			menu.addItem((item) => {
+				item.setTitle(`Move to ${side} sidebar`)
+					.setIcon(side === 'left' ? 'arrow-left-to-line' : 'arrow-right-to-line')
+					.setSection('pane')
+					.onClick(() => this.moveLeaf(leaf, side));
+			});
+		});
+	}
+
+	// Long-pressing a tab that is not the one on screen only ever reaches
+	// `onTabMenu`, so the move actions have to be added from there. Everything
+	// here is written to fail quiet: if the method is gone the patch is skipped,
+	// and a throw in our own code can never break Obsidian's menu.
+	private patchTabMenu() {
+		const proto = View.prototype as TabMenuView;
+		const original = proto.onTabMenu;
+		if (typeof original !== 'function') return;
+
+		const plugin = this;
+		let active = true;
+		const patched = function (this: View, menu: Menu) {
+			original.call(this, menu);
+			if (!active) return;
+
+			try {
+				const leaf = this.leaf;
+				if (leaf && leaf.getViewState().type !== 'empty') {
+					plugin.addMoveMenuItems(menu, leaf);
+				}
+			} catch (error) {
+				console.error('Mobile Sidebar Notes: could not extend the tab menu', error);
+			}
+		};
+
+		proto.onTabMenu = patched;
+		this.register(() => {
+			active = false;
+			// Only unwind our own patch; another plugin may have wrapped it since.
+			if (proto.onTabMenu === patched) proto.onTabMenu = original;
+		});
+	}
+
+	private ensureSidebarHasTab(side: SidebarSide) {
+		const split = this.getSplit(side);
+		let hasTab = false;
+		this.app.workspace.iterateAllLeaves((leaf) => {
+			if (leaf.getRoot() === split) hasTab = true;
+		});
+
+		if (!hasTab) this.getLeaf(side);
+	}
+
+	private getSidebarTabs(): SidebarTabItem[] {
+		const items: SidebarTabItem[] = [];
+
+		(['left', 'right'] as SidebarSide[]).forEach((side) => {
+			const split = this.getSplit(side);
+			this.app.workspace.iterateAllLeaves((leaf) => {
+				if (leaf.getRoot() !== split) return;
+				if (leaf.getViewState().type === 'empty') return;
+				items.push({ leaf, side });
+			});
+		});
+
+		return items;
+	}
+
+	// The tab menu can only be extended for the sidebar tab that is currently
+	// showing, so this picker is the way to reach the tabs behind it.
+	promptMoveSidebarTab() {
+		const items = this.getSidebarTabs();
+		if (!items.length) {
+			new Notice('No sidebar tabs to move');
+			return;
+		}
+
+		new SidebarTabSuggestModal(this.app, items, (item) => {
+			void this.moveLeaf(item.leaf, item.side === 'left' ? 'right' : 'left');
+		}).open();
+	}
+
 	private isSidebarLeaf(leaf: WorkspaceLeaf): boolean {
 		const root = leaf.getRoot();
 		return root === this.app.workspace.leftSplit || root === this.app.workspace.rightSplit;
@@ -321,7 +456,7 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			return;
 		}
 
-		const { type, state } = leaf.getViewState();
+		const { type, state, group } = leaf.getViewState();
 		const ephemeral = leaf.getEphemeralState();
 
 		const target = destination === 'main'
@@ -333,11 +468,19 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			return;
 		}
 
-		await target.setViewState({ type, state, active: true });
+		await target.setViewState({ type, state, group, active: true });
 		target.setEphemeralState(ephemeral);
 		leaf.detach();
 
-		if (destination !== 'main' && this.settings.autoPinTabs) {
+		// Moving the last tab out leaves the sidebar with nothing to interact with,
+		// so leave a new tab behind to open a file from.
+		if (inLeft || inRight) {
+			this.ensureSidebarHasTab(inLeft ? 'left' : 'right');
+		}
+
+		// Pinning only means something for note tabs; core views like Search or
+		// Files have nothing to be replaced by.
+		if (destination !== 'main' && this.settings.autoPinTabs && target.view instanceof FileView) {
 			target.setPinned(true);
 		}
 
@@ -498,6 +641,25 @@ export default class MobileSidebarNotesPlugin extends Plugin {
 			console.error('Failed to save settings:', error);
 			new Notice('Failed to save settings');
 		}
+	}
+}
+
+class SidebarTabSuggestModal extends FuzzySuggestModal<SidebarTabItem> {
+	constructor(app: App, private items: SidebarTabItem[], private onChoose: (item: SidebarTabItem) => void) {
+		super(app);
+		this.setPlaceholder('Select a sidebar tab to move');
+	}
+
+	getItems(): SidebarTabItem[] {
+		return this.items;
+	}
+
+	getItemText(item: SidebarTabItem): string {
+		return `${item.leaf.view.getDisplayText()} (${item.side} sidebar)`;
+	}
+
+	onChooseItem(item: SidebarTabItem) {
+		this.onChoose(item);
 	}
 }
 

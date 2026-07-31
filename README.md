@@ -9,6 +9,7 @@ While this plugin works as expected on desktop for loading notes in the sidebar 
 - Set specific notes as commands for quick sidebar access (compatible with hotkeys)
 - Choose left or right sidebar per note command (right is default for new commands)
 - Move the active tab into a sidebar (or back to the main area) while keeping its scroll position
+- Move core views such as Files, Search, or Bookmarks between the sidebars, either from their tab menu or with a picker
 - Open today's daily note directly in a sidebar (uses the core Daily notes settings)
 - Close all note tabs in a sidebar, or deduplicate repeated notes, in one command
 - Duplicate prevention for the same note in the same sidebar
@@ -41,6 +42,7 @@ While this plugin works as expected on desktop for loading notes in the sidebar 
 - **Open new left sidebar tab**: Creates empty tab in the left sidebar
 - **Move active tab to right/left sidebar**: Moves the tab you're viewing into that sidebar, preserving scroll position; the original is closed
 - **Move active tab to main area**: Moves the active sidebar tab back into the main editor area
+- **Move a sidebar tab to the other sidebar**: Lists every tab in both sidebars, including core views like Files or Search, and moves the one you pick to the opposite side
 - **Close all note tabs in right/left sidebar**: Closes note (and empty) tabs in that sidebar; core views like Search or Backlinks are left untouched
 - **Deduplicate sidebar note tabs**: Closes repeated copies of the same note within each sidebar
 - **Open today's daily note in right/left sidebar**: Resolves today's daily note (creating it if needed) and opens it in the sidebar
@@ -59,6 +61,8 @@ While this plugin works as expected on desktop for loading notes in the sidebar 
 
 - Within the sidebar, press and hold on the dropdown of the note for options such as closing, pinning, renaming, and moving the tab to the main area or the other sidebar.
 - A main-area note's menu (press and hold its tab/dropdown) gains "Move to left/right sidebar" too, handy when a note opens in the center instead of the sidebar it was triggered from.
+- Core views like Files, Search, and Bookmarks get the same move options, from any tab in the sidebar list rather than only the one currently on screen. Search keeps its query when moved.
+- Moving the last tab out of a sidebar leaves a new tab behind, so there is still something there to open a file from.
 - Tabs tend to persist between sessions / after opening unless manually closed.
 - Duplicate tabs are prevented when opening the same note in the same sidebar.
 - This is a standard editor tab, so most core note functionality should be preserved.
